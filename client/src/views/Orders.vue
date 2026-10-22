@@ -75,6 +75,56 @@
         </div>
       </div>
     </div>
+
+    <!-- Restocking orders: independent of the customer-order filters above -->
+    <div class="card submitted-orders">
+      <div class="card-header">
+        <h3 class="card-title">{{ t('submittedOrders.title') }} ({{ submittedOrders.length }})</h3>
+      </div>
+      <div v-if="submittedLoading" class="loading">{{ t('common.loading') }}</div>
+      <div v-else-if="submittedError" class="error">{{ submittedError }}</div>
+      <div v-else-if="submittedOrders.length === 0" class="empty-state">{{ t('submittedOrders.empty') }}</div>
+      <div v-else class="table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('orders.table.orderNumber') }}</th>
+              <th>{{ t('submittedOrders.submittedDate') }}</th>
+              <th>{{ t('orders.table.expectedDelivery') }}</th>
+              <th>{{ t('submittedOrders.leadTime') }}</th>
+              <th>{{ t('submittedOrders.lineItems') }}</th>
+              <th>{{ t('orders.table.totalValue') }}</th>
+              <th>{{ t('orders.table.status') }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template v-for="order in submittedOrders" :key="order.id">
+              <tr>
+                <td><strong>{{ order.order_number }}</strong></td>
+                <td>{{ formatDate(order.submitted_date) }}</td>
+                <td>{{ formatDate(order.expected_delivery) }}</td>
+                <td>{{ order.lead_time_days }}</td>
+                <td>
+                  <button type="button" class="expand-btn" :aria-expanded="isExpanded(order.id)" @click="toggleExpanded(order.id)">
+                    {{ isExpanded(order.id) ? '▼' : '▶' }} {{ order.items.length }}
+                  </button>
+                </td>
+                <td><strong>{{ currencySymbol }}{{ money(order.total_value) }}</strong></td>
+                <td><span class="badge info">{{ order.status }}</span></td>
+              </tr>
+              <tr v-if="isExpanded(order.id)" class="expanded-row">
+                <td colspan="7">
+                  <div v-for="item in order.items" :key="item.sku" class="item-entry">
+                    <span class="item-name">{{ item.sku }} - {{ translateProductName(item.name) }}</span>
+                    <span class="item-meta">{{ t('orders.quantity') }}: {{ item.quantity }} @ {{ currencySymbol }}{{ money(item.unit_cost) }} = {{ currencySymbol }}{{ money(item.line_total) }}</span>
+                  </div>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -146,16 +196,55 @@ export default {
     const formatDate = (dateString) => {
       const { currentLocale } = useI18n()
       const locale = currentLocale.value === 'ja' ? 'ja-JP' : 'en-US'
-      return new Date(dateString).toLocaleDateString(locale, {
+      const date = new Date(dateString)
+      if (isNaN(date.getTime())) return '-'
+      return date.toLocaleDateString(locale, {
         year: 'numeric',
         month: 'short',
         day: 'numeric'
       })
     }
 
-    onMounted(loadOrders)
+    // Submitted restocking orders: separate state, not affected by the filters
+    const submittedOrders = ref([])
+    const submittedLoading = ref(true)
+    const submittedError = ref(null)
+    const expandedIds = ref(new Set())
+
+    const loadSubmittedOrders = async () => {
+      try {
+        submittedLoading.value = true
+        submittedError.value = null
+        submittedOrders.value = await api.getRestockingOrders()
+      } catch (err) {
+        submittedError.value = t('submittedOrders.loadFailed') + ': ' + err.message
+      } finally {
+        submittedLoading.value = false
+      }
+    }
+
+    const money = (v) => Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+    const isExpanded = (id) => expandedIds.value.has(id)
+    const toggleExpanded = (id) => {
+      const next = new Set(expandedIds.value)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      expandedIds.value = next
+    }
+
+    onMounted(() => {
+      loadOrders()
+      loadSubmittedOrders()
+    })
 
     return {
+      submittedOrders,
+      submittedLoading,
+      submittedError,
+      isExpanded,
+      toggleExpanded,
+      money,
       t,
       loading,
       error,
@@ -201,6 +290,34 @@ export default {
 
 .col-value {
   width: 120px;
+}
+
+.submitted-orders {
+  margin-top: 1.5rem;
+}
+
+.empty-state {
+  padding: 2rem;
+  text-align: center;
+  color: #64748b;
+}
+
+.expand-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #3b82f6;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.expand-btn:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.expanded-row td {
+  background: #f8fafc;
 }
 
 /* Items details styling */
