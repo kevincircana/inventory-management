@@ -362,6 +362,40 @@ export default {
   },
 
   // Common
+  reports: {
+    title: 'パフォーマンスレポート',
+    subtitle: '四半期ごとのパフォーマンス指標と月次推移を表示',
+    loading: 'レポートを読み込んでいます...',
+    loadFailed: 'レポートの読み込みに失敗しました: {message}',
+    noData: '選択した条件に該当するレポートデータはありません',
+    na: 'N/A',
+    quarterly: {
+      title: '四半期パフォーマンス',
+      quarter: '四半期',
+      totalOrders: '総受注件数',
+      totalRevenue: '総売上',
+      avgOrderValue: '平均受注額',
+      fulfillmentRate: '出荷完了率'
+    },
+    monthlyChart: {
+      title: '月次売上推移'
+    },
+    monthOverMonth: {
+      title: '前月比分析',
+      month: '月',
+      orders: '受注件数',
+      revenue: '売上',
+      change: '増減',
+      growthRate: '成長率'
+    },
+    stats: {
+      totalRevenue: '総売上',
+      avgMonthlyRevenue: '月平均売上',
+      totalOrders: '総受注件数',
+      bestQuarter: '最高業績の四半期'
+    }
+  },
+
   common: {
     loading: '読み込み中...',
     error: 'エラー',

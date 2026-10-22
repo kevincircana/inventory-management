@@ -231,25 +231,36 @@ def get_recent_transactions():
     """Get recent transactions"""
     return recent_transactions
 
+def _parse_year_month(order_date: str) -> Optional[tuple]:
+    """Return (year, month) from an ISO order_date, or None if it cannot be parsed"""
+    # Reports bucket by the order's own year and month, so they are not tied to 2025
+    try:
+        year, month = int(order_date[:4]), int(order_date[5:7])
+    except (TypeError, ValueError):
+        return None
+    if not 1 <= month <= 12:
+        return None
+    return year, month
+
 @app.get("/api/reports/quarterly")
-def get_quarterly_reports():
-    """Get quarterly performance reports"""
-    # Calculate quarterly statistics from orders
+def get_quarterly_reports(
+    warehouse: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    month: Optional[str] = None
+):
+    """Get quarterly performance reports, filtered the same way as /api/orders"""
+    # Filter a copy so the global orders list is not changed
+    filtered_orders = filter_by_month(apply_filters(orders, warehouse, category, status), month)
+
     quarters = {}
 
-    for order in orders:
-        order_date = order.get('order_date', '')
-        # Determine quarter
-        if '2025-01' in order_date or '2025-02' in order_date or '2025-03' in order_date:
-            quarter = 'Q1-2025'
-        elif '2025-04' in order_date or '2025-05' in order_date or '2025-06' in order_date:
-            quarter = 'Q2-2025'
-        elif '2025-07' in order_date or '2025-08' in order_date or '2025-09' in order_date:
-            quarter = 'Q3-2025'
-        elif '2025-10' in order_date or '2025-11' in order_date or '2025-12' in order_date:
-            quarter = 'Q4-2025'
-        else:
+    for order in filtered_orders:
+        parsed = _parse_year_month(order.get('order_date', ''))
+        if parsed is None:
             continue
+        year, month_num = parsed
+        quarter = f"Q{(month_num - 1) // 3 + 1}-{year}"
 
         if quarter not in quarters:
             quarters[quarter] = {
@@ -273,35 +284,45 @@ def get_quarterly_reports():
             data['fulfillment_rate'] = round((data['delivered_orders'] / data['total_orders']) * 100, 1)
         result.append(data)
 
-    # Sort by quarter
-    result.sort(key=lambda x: x['quarter'])
+    # Sort by year, then quarter. A plain string sort would put Q1-2026 before Q4-2025.
+    result.sort(key=lambda x: (int(x['quarter'].split('-')[1]), int(x['quarter'][1])))
     return result
 
 @app.get("/api/reports/monthly-trends")
-def get_monthly_trends():
-    """Get month-over-month trends"""
+def get_monthly_trends(
+    warehouse: Optional[str] = None,
+    category: Optional[str] = None,
+    status: Optional[str] = None,
+    month: Optional[str] = None
+):
+    """Get month-over-month trends, filtered the same way as /api/orders"""
+    # Filter a copy so the global orders list is not changed
+    filtered_orders = filter_by_month(apply_filters(orders, warehouse, category, status), month)
+
     months = {}
 
-    for order in orders:
+    for order in filtered_orders:
         order_date = order.get('order_date', '')
-        if not order_date:
+        parsed = _parse_year_month(order_date)
+        if parsed is None:
             continue
 
-        # Extract month (format: YYYY-MM-DD)
-        month = order_date[:7]  # Gets YYYY-MM
+        # Bucket key is YYYY-MM, taken from the validated date
+        year, month_num = parsed
+        month_key = f"{year:04d}-{month_num:02d}"
 
-        if month not in months:
-            months[month] = {
-                'month': month,
+        if month_key not in months:
+            months[month_key] = {
+                'month': month_key,
                 'order_count': 0,
                 'revenue': 0,
                 'delivered_count': 0
             }
 
-        months[month]['order_count'] += 1
-        months[month]['revenue'] += order.get('total_value', 0)
+        months[month_key]['order_count'] += 1
+        months[month_key]['revenue'] += order.get('total_value', 0)
         if order.get('status') == 'Delivered':
-            months[month]['delivered_count'] += 1
+            months[month_key]['delivered_count'] += 1
 
     # Convert to list and sort
     result = list(months.values())
