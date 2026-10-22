@@ -1,4 +1,6 @@
-from fastapi import FastAPI, HTTPException
+import itertools
+from datetime import date, datetime, timedelta
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
@@ -89,6 +91,8 @@ class DemandForecast(BaseModel):
     forecasted_demand: int
     trend: str
     period: str
+    quantity_on_hand: int
+    unit_cost: float
 
 class BacklogItem(BaseModel):
     id: str
@@ -303,6 +307,227 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+# Tasks are kept in memory only. Ids start at 1000 so they never collide with
+# the mock tasks in useAuth.js (ids 1-4), which the client merges into one list.
+class Task(BaseModel):
+    id: int
+    title: str
+    priority: str
+    dueDate: str
+    status: str = 'pending'
+
+class CreateTaskRequest(BaseModel):
+    title: str
+    priority: str = 'medium'
+    dueDate: str
+
+tasks_store: List[Task] = []
+_next_task_id = itertools.count(1000)
+
+@app.get("/api/tasks", response_model=List[Task])
+def get_tasks():
+    """List tasks created through the API"""
+    return tasks_store
+
+@app.post("/api/tasks", response_model=Task, status_code=201)
+def create_task(body: CreateTaskRequest):
+    """Create a task"""
+    task = Task(id=next(_next_task_id), **body.model_dump())
+    tasks_store.append(task)
+    return task
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int):
+    """Delete a task by id"""
+    for i, task in enumerate(tasks_store):
+        if task.id == task_id:
+            del tasks_store[i]
+            return {"deleted": task_id}
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+@app.patch("/api/tasks/{task_id}", response_model=Task)
+def toggle_task(task_id: int):
+    """Toggle a task between pending and completed. The client sends no body."""
+    for task in tasks_store:
+        if task.id == task_id:
+            task.status = 'pending' if task.status == 'completed' else 'completed'
+            return task
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+# Continues after any seeded purchase orders.
+_next_po_id = itertools.count(len(purchase_orders) + 1)
+
+@app.get("/api/purchase-orders/{backlog_item_id}",response_model=PurchaseOrder)
+def get_purchase_order(backlog_item_id: str):
+    """Get the purchase order for a backlog item"""
+    for po in purchase_orders:
+        if po["backlog_item_id"] == backlog_item_id:
+            return po
+    raise HTTPException(status_code=404, detail=f"No purchase order for backlog item {backlog_item_id}")
+
+@app.post("/api/purchase-orders", response_model=PurchaseOrder, status_code=201)
+def create_purchase_order(body: CreatePurchaseOrderRequest):
+    """Create a purchase order for a backlog item"""
+    if not any(item["id"] == body.backlog_item_id for item in backlog_items):
+        raise HTTPException(status_code=404, detail=f"Backlog item {body.backlog_item_id} not found")
+    # Only one PO per backlog item. The backlog endpoint flags items that already have one.
+    if any(po["backlog_item_id"] == body.backlog_item_id for po in purchase_orders):
+        raise HTTPException(status_code=400, detail=f"Backlog item {body.backlog_item_id} already has a purchase order")
+
+    po = PurchaseOrder(
+        id=f"PO-{next(_next_po_id):04d}",
+        status="Pending",
+        created_date=date.today().isoformat(),
+        **body.model_dump()
+    )
+    # Appended to the module-level list so GET endpoints see it. Lost on restart, like all data here.
+    purchase_orders.append(po.model_dump())
+    return po
+
+# Restocking. Orders live in memory only, like the other demo data.
+RESTOCK_LEAD_TIME_DAYS = 14  # Fixed demo lead time. No supplier lead-time data exists yet.
+
+class RestockingRecommendation(BaseModel):
+    sku: str
+    name: str
+    quantity: int
+    unit_cost: float
+    line_total: float
+    forecasted_demand: int
+    quantity_on_hand: int
+
+class RestockingRecommendations(BaseModel):
+    budget: float
+    total_cost: float
+    remaining_budget: float
+    items: List[RestockingRecommendation]
+
+class PlaceRestockingItem(BaseModel):
+    sku: str
+    quantity: int
+
+class PlaceRestockingRequest(BaseModel):
+    items: List[PlaceRestockingItem]
+
+class RestockingOrderLine(BaseModel):
+    sku: str
+    name: str
+    quantity: int
+    unit_cost: float
+    line_total: float
+
+class RestockingOrder(BaseModel):
+    id: str
+    order_number: str
+    submitted_date: str
+    expected_delivery: str
+    lead_time_days: int
+    status: str
+    items: List[RestockingOrderLine]
+    total_value: float
+
+restocking_orders: List[RestockingOrder] = []
+_next_restocking_order_id = itertools.count(1)
+
+def build_restock_recommendations(budget: float) -> RestockingRecommendations:
+    """Pick items to restock, largest shortfall first, without exceeding the budget"""
+    # Shortfall is forecast demand not covered by stock on hand.
+    # Forecast entries carry their own on-hand quantity and unit cost, so no inventory join is needed.
+    candidates = []
+    for forecast in demand_forecasts:
+        shortfall = forecast["forecasted_demand"] - forecast["quantity_on_hand"]
+        if shortfall > 0:
+            candidates.append((shortfall, forecast))
+
+    candidates.sort(key=lambda c: c[0], reverse=True)
+
+    remaining = budget
+    chosen = []
+    for shortfall, forecast in candidates:
+        line_total = round(shortfall * forecast["unit_cost"], 2)
+        # Skip items that don't fit instead of stopping, so cheaper items lower
+        # in the list can still use what is left of the budget.
+        if line_total > remaining:
+            continue
+        remaining -= line_total
+        chosen.append(RestockingRecommendation(
+            sku=forecast["item_sku"],
+            name=forecast["item_name"],
+            quantity=shortfall,
+            unit_cost=forecast["unit_cost"],
+            line_total=line_total,
+            forecasted_demand=forecast["forecasted_demand"],
+            quantity_on_hand=forecast["quantity_on_hand"],
+        ))
+
+    total_cost = round(budget - remaining, 2)
+    return RestockingRecommendations(
+        budget=budget,
+        total_cost=total_cost,
+        remaining_budget=round(remaining, 2),
+        items=chosen,
+    )
+
+@app.get("/api/restocking/recommendations", response_model=RestockingRecommendations)
+def get_restocking_recommendations(budget: float = Query(0, ge=0)):
+    """Recommend restocking items that fit within the given budget"""
+    return build_restock_recommendations(budget)
+
+@app.post("/api/restocking/orders", response_model=RestockingOrder, status_code=201)
+def place_restocking_order(body: PlaceRestockingRequest):
+    """Submit a restocking order. Unit costs are looked up on the server, not taken from the client."""
+    if not body.items:
+        raise HTTPException(status_code=400, detail="Order must contain at least one item")
+
+    skus = [requested.sku for requested in body.items]
+    duplicates = sorted({sku for sku in skus if skus.count(sku) > 1})
+    if duplicates:
+        raise HTTPException(status_code=400, detail=f"Duplicate SKUs in order: {', '.join(duplicates)}")
+
+    forecast_by_sku = {f["item_sku"]: f for f in demand_forecasts}
+    lines = []
+    for requested in body.items:
+        if requested.quantity <= 0:
+            raise HTTPException(status_code=400, detail=f"Quantity for {requested.sku} must be greater than 0")
+        forecast = forecast_by_sku.get(requested.sku)
+        if forecast is None:
+            raise HTTPException(status_code=404, detail=f"SKU {requested.sku} not found")
+        # Same shortfall the recommendations use, so an order can't exceed what is needed.
+        shortfall = forecast["forecasted_demand"] - forecast["quantity_on_hand"]
+        if requested.quantity > shortfall:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantity for {requested.sku} exceeds the recommended shortfall of {max(shortfall, 0)}",
+            )
+        lines.append(RestockingOrderLine(
+            sku=forecast["item_sku"],
+            name=forecast["item_name"],
+            quantity=requested.quantity,
+            unit_cost=forecast["unit_cost"],
+            line_total=round(requested.quantity * forecast["unit_cost"], 2),
+        ))
+
+    submitted = datetime.now().replace(microsecond=0)
+    expected = submitted + timedelta(days=RESTOCK_LEAD_TIME_DAYS)
+    order_seq = next(_next_restocking_order_id)
+    order = RestockingOrder(
+        id=str(order_seq),
+        order_number=f"RST-{submitted.year}-{order_seq:04d}",
+        submitted_date=submitted.isoformat(),
+        expected_delivery=expected.isoformat(),
+        lead_time_days=RESTOCK_LEAD_TIME_DAYS,
+        status="Submitted",
+        items=lines,
+        total_value=round(sum(line.line_total for line in lines), 2),
+    )
+    restocking_orders.append(order)
+    return order
+
+@app.get("/api/restocking/orders", response_model=List[RestockingOrder])
+def get_restocking_orders():
+    """List submitted restocking orders, newest first"""
+    return list(reversed(restocking_orders))
 
 if __name__ == "__main__":
     import uvicorn

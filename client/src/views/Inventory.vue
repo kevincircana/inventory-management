@@ -261,6 +261,19 @@ export default {
   min-width: 300px;
 }
 
+/* On phones the 300px minimum plus the title leaves no room for the
+   search box, so the header wraps and the search takes the full row. */
+@media (max-width: 599px) {
+  .card-header {
+    flex-wrap: wrap;
+  }
+
+  .search-box {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
 .search-icon {
   position: absolute;
   left: 0.75rem;

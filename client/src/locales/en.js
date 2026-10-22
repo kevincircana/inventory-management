@@ -6,8 +6,17 @@ export default {
     orders: 'Orders',
     finance: 'Finance',
     demandForecast: 'Demand Forecast',
+    restocking: 'Restocking',
     companyName: 'Catalyst Components',
-    subtitle: 'Inventory Management System'
+    subtitle: 'Inventory Management System',
+    groupOperations: 'Operations',
+    groupAnalysis: 'Planning and analysis',
+    primaryNavigation: 'Main navigation',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
+    toggleSidebar: 'Icons-only sidebar',
+    collapseSidebar: 'Collapse sidebar',
+    expandSidebar: 'Expand sidebar'
   },
 
   // Dashboard
@@ -309,6 +318,47 @@ export default {
     english: 'English',
     japanese: 'Japanese',
     selectLanguage: 'Select Language'
+  },
+
+  // Restocking
+  restocking: {
+    title: 'Restocking',
+    description: 'Get budget-based restocking recommendations and place a purchase order',
+    budget: 'Budget',
+    recommendations: 'Recommended Items',
+    totalCost: 'Total cost',
+    remainingBudget: 'Remaining budget',
+    empty: 'No items fit the selected budget',
+    placeOrder: 'Place Order',
+    placing: 'Placing order...',
+    updating: 'Updating...',
+    orderFailed: 'Failed to place order',
+    loadFailed: 'Failed to load recommendations',
+    confirmation: 'Order submitted',
+    orderNumber: 'Order number',
+    submittedDate: 'Submitted',
+    expectedDelivery: 'Expected delivery',
+    leadTime: 'Lead time',
+    days: '{count} days',
+    table: {
+      sku: 'SKU',
+      itemName: 'Item Name',
+      quantity: 'Qty to Order',
+      unitCost: 'Unit Cost',
+      lineTotal: 'Line Total',
+      forecastedDemand: 'Forecasted Demand',
+      onHand: 'On Hand'
+    }
+  },
+
+  // Submitted restocking orders (shown on the Orders page)
+  submittedOrders: {
+    title: 'Submitted Orders',
+    empty: 'No restocking orders have been submitted',
+    loadFailed: 'Failed to load submitted orders',
+    submittedDate: 'Submitted',
+    leadTime: 'Lead Time (days)',
+    lineItems: 'Line Items'
   },
 
   // Common

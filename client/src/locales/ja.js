@@ -6,8 +6,17 @@ export default {
     orders: '注文',
     finance: '財務',
     demandForecast: '需要予測',
+    restocking: '補充発注',
     companyName: '触媒コンポーネンツ',
-    subtitle: '在庫管理システム'
+    subtitle: '在庫管理システム',
+    groupOperations: '運用',
+    groupAnalysis: '計画と分析',
+    primaryNavigation: 'メインナビゲーション',
+    openMenu: 'メニューを開く',
+    closeMenu: 'メニューを閉じる',
+    toggleSidebar: 'アイコンのみのサイドバー',
+    collapseSidebar: 'サイドバーを折りたたむ',
+    expandSidebar: 'サイドバーを展開'
   },
 
   // Dashboard
@@ -309,6 +318,47 @@ export default {
     english: 'English',
     japanese: '日本語',
     selectLanguage: '言語を選択'
+  },
+
+  // Restocking
+  restocking: {
+    title: '補充発注',
+    description: '予算に基づく補充推奨を確認し、発注を行います',
+    budget: '予算',
+    recommendations: '推奨品目',
+    totalCost: '合計費用',
+    remainingBudget: '残り予算',
+    empty: '選択した予算に収まる品目はありません',
+    placeOrder: '発注する',
+    placing: '発注中...',
+    updating: '更新中...',
+    orderFailed: '発注に失敗しました',
+    loadFailed: '推奨の読み込みに失敗しました',
+    confirmation: '発注を送信しました',
+    orderNumber: '注文番号',
+    submittedDate: '送信日',
+    expectedDelivery: '予定納品日',
+    leadTime: 'リードタイム',
+    days: '{count}日',
+    table: {
+      sku: 'SKU',
+      itemName: '品名',
+      quantity: '発注数量',
+      unitCost: '単価',
+      lineTotal: '小計',
+      forecastedDemand: '予測需要',
+      onHand: '在庫数'
+    }
+  },
+
+  // Submitted restocking orders (shown on the Orders page)
+  submittedOrders: {
+    title: '送信済み注文',
+    empty: '送信済みの補充発注はありません',
+    loadFailed: '送信済み注文の読み込みに失敗しました',
+    submittedDate: '送信日',
+    leadTime: 'リードタイム（日）',
+    lineItems: '明細数'
   },
 
   // Common
