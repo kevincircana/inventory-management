@@ -111,6 +111,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { api } from '../api'
 import { useI18n } from '../composables/useI18n'
+import { useRestockingOrder } from '../composables/useRestockingOrder'
 
 const BUDGET_MIN = 0
 const BUDGET_MAX = 50000
@@ -130,18 +131,18 @@ export default {
     const totalCost = ref(0)
     const remainingBudget = ref(0)
 
-    const placing = ref(false)
-    const orderResult = ref(null)
-    const orderError = ref(null)
-
     let debounceTimer = null
     let requestSeq = 0
-    let idempotencyKey = null // one key per logical order submission
-    let idempotencyKeyCart = null // cart contents the key was issued for
 
-    const canPlaceOrder = computed(() =>
-      items.value.length > 0 && !placing.value && !refreshing.value && !loading.value
-    )
+    const busy = computed(() => refreshing.value || loading.value)
+    const { placing, orderResult, orderError, canPlaceOrder, placeOrder, resetForBudgetChange } =
+      useRestockingOrder({
+        items,
+        busy,
+        submit: (payload, key) => api.placeRestockingOrder(payload, key),
+        formatError: err =>
+          err.response?.data?.detail || t('restocking.orderFailed') + ': ' + err.message
+      })
 
     const loadRecommendations = async () => {
       // Each request gets an id; only the latest one may write state. Without
@@ -169,38 +170,10 @@ export default {
     // fetch once the user pauses, instead of one request per step.
     watch(budget, () => {
       refreshing.value = true
-      orderResult.value = null
-      orderError.value = null
+      resetForBudgetChange() // clears placed marker + result so the new cart can be ordered
       clearTimeout(debounceTimer)
       debounceTimer = setTimeout(loadRecommendations, DEBOUNCE_MS)
     })
-
-    const placeOrder = async () => {
-      // Guard the function itself (not only the button) against double submits.
-      if (placing.value || !canPlaceOrder.value) return
-      placing.value = true
-      orderError.value = null
-      orderResult.value = null
-      const payload = items.value.map(i => ({ sku: i.sku, quantity: i.quantity }))
-      const signature = JSON.stringify(payload)
-      // The key is kept across failed attempts on purpose: a timed-out request
-      // may have succeeded server-side, and resending the same key makes the
-      // server return that order instead of creating a second one. A different
-      // cart (signature mismatch) is a new order and gets a new key.
-      if (!idempotencyKey || idempotencyKeyCart !== signature) {
-        idempotencyKey = crypto.randomUUID()
-        idempotencyKeyCart = signature
-      }
-      try {
-        orderResult.value = await api.placeRestockingOrder(payload, idempotencyKey)
-        idempotencyKey = null // order succeeded; next order starts fresh
-        idempotencyKeyCart = null
-      } catch (err) {
-        orderError.value = err.response?.data?.detail || t('restocking.orderFailed') + ': ' + err.message
-      } finally {
-        placing.value = false
-      }
-    }
 
     const formatCurrency = (value, cents = false) => {
       const isJpy = currentCurrency.value === 'JPY'
