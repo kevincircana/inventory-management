@@ -79,7 +79,7 @@
         <span class="mobile-bar-title">{{ t('nav.companyName') }}</span>
       </div>
 
-      <div class="app-header">
+      <div v-if="showGlobalFilters" class="app-header">
         <FilterBar />
       </div>
 
@@ -139,7 +139,8 @@ export default {
         items: [
           { to: '/', key: 'nav.overview' },
           { to: '/inventory', key: 'nav.inventory' },
-          { to: '/orders', key: 'nav.orders' }
+          { to: '/orders', key: 'nav.orders' },
+          { to: '/audit-log', key: 'nav.auditLog' }
         ]
       },
       {
@@ -162,6 +163,7 @@ export default {
       '/spending': ['M3 6a1 1 0 011-1h12a1 1 0 011 1v9a1 1 0 01-1 1H4a1 1 0 01-1-1V6z', 'M3 9h14', 'M13.5 12.5h1.5'],
       '/demand': ['M3 16h14', 'M4 13l4-4 3 3 5-6', 'M12.5 6H16v3.5'],
       '/restocking': ['M4 10a6 6 0 0110.2-4.3L16 7.5', 'M16 4v3.5h-3.5', 'M16 10a6 6 0 01-10.2 4.3L4 12.5', 'M4 16v-3.5h3.5'],
+      '/audit-log': ['M4 3h12v14H4V3z', 'M7 7h6', 'M7 10h6', 'M7 13h3.5'],
       '/reports': ['M5 3h7l3 3v11H5V3z', 'M12 3v3h3', 'M8 10h4', 'M8 13h4']
     }
     const itemLabel = (item) => (item.key ? t(item.key) : item.label)
@@ -212,6 +214,9 @@ export default {
     const onResize = () => {
       if (window.innerWidth >= 900) closeNav()
     }
+
+    // The audit log has its own filters and does not use the global ones, so hide the bar there.
+    const showGlobalFilters = computed(() => route.path !== '/audit-log')
 
     watch(() => route.path, () => closeNav())
     watch(navOpen, (open) => {
@@ -302,6 +307,7 @@ export default {
 
     return {
       t,
+      showGlobalFilters,
       navGroups,
       navIcons,
       itemLabel,

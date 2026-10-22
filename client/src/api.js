@@ -1,6 +1,18 @@
 import axios from 'axios'
+import { useAuth } from './composables/useAuth'
 
 const API_BASE_URL = 'http://localhost:8001/api'
+
+// Send the signed-in user's name with every write so the audit log can record who made each change.
+// The name is URL-encoded because HTTP header values are Latin-1, and Japanese names would break the request.
+// The server does not verify this value.
+axios.interceptors.request.use((config) => {
+  if (config.method === 'post' && config.url?.startsWith(API_BASE_URL)) {
+    const { currentUser } = useAuth()
+    config.headers['X-Actor-Name'] = encodeURIComponent(currentUser.value.name)
+  }
+  return config
+})
 
 export const api = {
   async getInventory(filters = {}) {
@@ -95,6 +107,18 @@ export const api = {
     if (filters.month && filters.month !== 'all') params.append('month', filters.month)
 
     const response = await axios.get(`${API_BASE_URL}/reports/monthly-trends?${params.toString()}`)
+    return response.data
+  },
+
+  // Audit log query. Filters use the same 'all means no filter' convention as the other endpoints.
+  async getAuditLog(filters = {}) {
+    const params = new URLSearchParams()
+    if (filters.entityType && filters.entityType !== 'all') params.append('entity_type', filters.entityType)
+    if (filters.action && filters.action !== 'all') params.append('action', filters.action)
+    if (filters.startDate) params.append('start_date', filters.startDate)
+    if (filters.endDate) params.append('end_date', filters.endDate)
+
+    const response = await axios.get(`${API_BASE_URL}/audit-log?${params.toString()}`)
     return response.data
   },
 

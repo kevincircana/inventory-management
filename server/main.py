@@ -1,12 +1,50 @@
 import itertools
+from collections import deque
 from datetime import date, datetime, timedelta
-from fastapi import FastAPI, HTTPException, Query
+from urllib.parse import unquote
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders
 
 app = FastAPI(title="Factory Inventory Management System")
+
+# Audit log. Records who created each purchase order and restocking order, and when.
+# Like the other demo data it lives in memory. The log is capped at the most recent
+# entries, so old entries drop off once the cap is reached.
+AUDIT_LOG_MAX_ENTRIES = 1000
+AUDIT_ACTOR_MAX_LENGTH = 100
+audit_log: deque = deque(maxlen=AUDIT_LOG_MAX_ENTRIES)
+_next_audit_id = itertools.count(1)
+
+class AuditEntry(BaseModel):
+    id: int
+    timestamp: str
+    entity_type: str  # "purchase_order" or "restocking_order"
+    entity_id: str
+    action: str  # currently only "create"
+    # Reported by the client in the X-Actor-Name header. Not verified by the server.
+    actor_name: Optional[str] = None
+    before: Optional[dict] = None  # None for creates
+    after: Optional[dict] = None
+
+def record_audit(request: Request, entity_type: str, entity_id: str, action: str,
+                 before: Optional[dict], after: Optional[dict]) -> None:
+    """Append one audit entry for a change."""
+    raw_actor = request.headers.get("X-Actor-Name")
+    # The client URL-encodes the name, so non-ASCII names such as Japanese survive the HTTP header
+    actor = unquote(raw_actor).strip()[:AUDIT_ACTOR_MAX_LENGTH] if raw_actor else ""
+    audit_log.append(AuditEntry(
+        id=next(_next_audit_id),
+        timestamp=datetime.now().replace(microsecond=0).isoformat(),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        actor_name=actor or None,
+        before=before,
+        after=after,
+    ).model_dump())
 
 # Quarter mapping for date filtering
 QUARTER_MAP = {
@@ -388,7 +426,7 @@ def get_purchase_order(backlog_item_id: str):
     raise HTTPException(status_code=404, detail=f"No purchase order for backlog item {backlog_item_id}")
 
 @app.post("/api/purchase-orders", response_model=PurchaseOrder, status_code=201)
-def create_purchase_order(body: CreatePurchaseOrderRequest):
+def create_purchase_order(body: CreatePurchaseOrderRequest, request: Request):
     """Create a purchase order for a backlog item"""
     if not any(item["id"] == body.backlog_item_id for item in backlog_items):
         raise HTTPException(status_code=404, detail=f"Backlog item {body.backlog_item_id} not found")
@@ -404,6 +442,7 @@ def create_purchase_order(body: CreatePurchaseOrderRequest):
     )
     # Appended to the module-level list so GET endpoints see it. Lost on restart, like all data here.
     purchase_orders.append(po.model_dump())
+    record_audit(request, "purchase_order", po.id, "create", None, po.model_dump())
     return po
 
 # Restocking. Orders live in memory only, like the other demo data.
@@ -496,7 +535,7 @@ def get_restocking_recommendations(budget: float = Query(0, ge=0)):
     return build_restock_recommendations(budget)
 
 @app.post("/api/restocking/orders", response_model=RestockingOrder, status_code=201)
-def place_restocking_order(body: PlaceRestockingRequest):
+def place_restocking_order(body: PlaceRestockingRequest, request: Request):
     """Submit a restocking order. Unit costs are looked up on the server, not taken from the client."""
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
@@ -543,7 +582,27 @@ def place_restocking_order(body: PlaceRestockingRequest):
         total_value=round(sum(line.line_total for line in lines), 2),
     )
     restocking_orders.append(order)
+    record_audit(request, "restocking_order", order.id, "create", None, order.model_dump())
     return order
+
+@app.get("/api/audit-log", response_model=List[AuditEntry])
+def get_audit_log(
+    entity_type: Optional[str] = Query(None, pattern="^(all|purchase_order|restocking_order)$"),
+    action: Optional[str] = Query(None, pattern="^(all|create)$"),
+    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Query the audit log, newest first. Dates are inclusive and compare against the date part of each timestamp."""
+    entries = list(audit_log)
+    if entity_type and entity_type != "all":
+        entries = [e for e in entries if e["entity_type"] == entity_type]
+    if action and action != "all":
+        entries = [e for e in entries if e["action"] == action]
+    if start_date:
+        entries = [e for e in entries if e["timestamp"][:10] >= start_date]
+    if end_date:
+        entries = [e for e in entries if e["timestamp"][:10] <= end_date]
+    return list(reversed(entries))
 
 @app.get("/api/restocking/orders", response_model=List[RestockingOrder])
 def get_restocking_orders():
