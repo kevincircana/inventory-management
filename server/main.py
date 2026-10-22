@@ -355,7 +355,10 @@ def toggle_task(task_id: int):
             return task
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
-@app.get("/api/purchase-orders/{backlog_item_id}", response_model=PurchaseOrder)
+# Continues after any seeded purchase orders.
+_next_po_id = itertools.count(len(purchase_orders) + 1)
+
+@app.get("/api/purchase-orders/{backlog_item_id}",response_model=PurchaseOrder)
 def get_purchase_order(backlog_item_id: str):
     """Get the purchase order for a backlog item"""
     for po in purchase_orders:
@@ -373,7 +376,7 @@ def create_purchase_order(body: CreatePurchaseOrderRequest):
         raise HTTPException(status_code=400, detail=f"Backlog item {body.backlog_item_id} already has a purchase order")
 
     po = PurchaseOrder(
-        id=f"PO-{len(purchase_orders) + 1:04d}",
+        id=f"PO-{next(_next_po_id):04d}",
         status="Pending",
         created_date=date.today().isoformat(),
         **body.model_dump()
@@ -425,6 +428,7 @@ class RestockingOrder(BaseModel):
     total_value: float
 
 restocking_orders: List[RestockingOrder] = []
+_next_restocking_order_id = itertools.count(1)
 
 def build_restock_recommendations(budget: float) -> RestockingRecommendations:
     """Pick items to restock, largest shortfall first, without exceeding the budget"""
@@ -476,6 +480,11 @@ def place_restocking_order(body: PlaceRestockingRequest):
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
 
+    skus = [requested.sku for requested in body.items]
+    duplicates = sorted({sku for sku in skus if skus.count(sku) > 1})
+    if duplicates:
+        raise HTTPException(status_code=400, detail=f"Duplicate SKUs in order: {', '.join(duplicates)}")
+
     forecast_by_sku = {f["item_sku"]: f for f in demand_forecasts}
     lines = []
     for requested in body.items:
@@ -484,6 +493,13 @@ def place_restocking_order(body: PlaceRestockingRequest):
         forecast = forecast_by_sku.get(requested.sku)
         if forecast is None:
             raise HTTPException(status_code=404, detail=f"SKU {requested.sku} not found")
+        # Same shortfall the recommendations use, so an order can't exceed what is needed.
+        shortfall = forecast["forecasted_demand"] - forecast["quantity_on_hand"]
+        if requested.quantity > shortfall:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Quantity for {requested.sku} exceeds the recommended shortfall of {max(shortfall, 0)}",
+            )
         lines.append(RestockingOrderLine(
             sku=forecast["item_sku"],
             name=forecast["item_name"],
@@ -494,9 +510,10 @@ def place_restocking_order(body: PlaceRestockingRequest):
 
     submitted = datetime.now().replace(microsecond=0)
     expected = submitted + timedelta(days=RESTOCK_LEAD_TIME_DAYS)
+    order_seq = next(_next_restocking_order_id)
     order = RestockingOrder(
-        id=str(len(restocking_orders) + 1),
-        order_number=f"RST-{submitted.year}-{len(restocking_orders) + 1:04d}",
+        id=str(order_seq),
+        order_number=f"RST-{submitted.year}-{order_seq:04d}",
         submitted_date=submitted.isoformat(),
         expected_delivery=expected.isoformat(),
         lead_time_days=RESTOCK_LEAD_TIME_DAYS,
