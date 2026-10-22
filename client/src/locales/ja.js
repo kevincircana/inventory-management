@@ -7,6 +7,7 @@ export default {
     finance: '財務',
     demandForecast: '需要予測',
     restocking: '補充発注',
+    auditLog: '監査ログ',
     companyName: '触媒コンポーネンツ',
     subtitle: '在庫管理システム',
     groupOperations: '運用',
@@ -331,6 +332,8 @@ export default {
     empty: '選択した予算に収まる品目はありません',
     placeOrder: '発注する',
     placing: '発注中...',
+    // TODO: needs native Japanese review
+    submitting: '送信中...',
     updating: '更新中...',
     orderFailed: '発注に失敗しました',
     loadFailed: '推奨の読み込みに失敗しました',
@@ -359,6 +362,47 @@ export default {
     submittedDate: '送信日',
     leadTime: 'リードタイム（日）',
     lineItems: '明細数'
+  },
+
+  // Japanese is best effort; needs native review
+  auditLog: {
+    title: '監査ログ',
+    subtitle: '発注書および補充発注の変更履歴',
+    retentionNote: 'ログは直近1,000件を保持し、サーバー再起動時にリセットされます。',
+    loading: '監査ログを読み込み中...',
+    loadFailed: '監査ログの読み込みに失敗しました: {message}',
+    noData: '選択した条件に一致する監査エントリはありません',
+    filters: {
+      entityType: '対象種別',
+      action: '操作',
+      startDate: '開始日',
+      endDate: '終了日',
+      all: 'すべて',
+      reset: 'リセット'
+    },
+    entityType: {
+      purchase_order: '発注書',
+      restocking_order: '補充発注'
+    },
+    action: {
+      create: '作成'
+    },
+    columns: {
+      timestamp: '日時',
+      entityType: '対象種別',
+      entityId: '対象ID',
+      action: '操作',
+      actor: '実行者',
+      changes: '変更内容'
+    },
+    actorReportedByClient: 'クライアント申告',
+    expand: '変更内容を表示',
+    collapse: '変更内容を隠す',
+    noPreviousValue: '以前の値なし',
+    field: 'フィールド',
+    before: '変更前',
+    after: '変更後',
+    exportCsv: 'CSVをエクスポート'
   },
 
   // Common

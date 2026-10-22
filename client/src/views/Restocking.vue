@@ -60,10 +60,13 @@
           <button
             type="button"
             class="place-order-btn"
+            :class="{ 'is-submitting': placing }"
             :disabled="!canPlaceOrder"
+            :aria-busy="placing ? 'true' : 'false'"
             @click="placeOrder"
           >
-            {{ placing ? t('restocking.placing') : t('restocking.placeOrder') }}
+            <span v-if="placing" class="spinner" aria-hidden="true"></span>
+            {{ placing ? t('restocking.submitting') : t('restocking.placeOrder') }}
           </button>
         </div>
 
@@ -108,6 +111,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { api } from '../api'
 import { useI18n } from '../composables/useI18n'
+import { useRestockingOrder } from '../composables/useRestockingOrder'
 
 const BUDGET_MIN = 0
 const BUDGET_MAX = 50000
@@ -127,16 +131,18 @@ export default {
     const totalCost = ref(0)
     const remainingBudget = ref(0)
 
-    const placing = ref(false)
-    const orderResult = ref(null)
-    const orderError = ref(null)
-
     let debounceTimer = null
     let requestSeq = 0
 
-    const canPlaceOrder = computed(() =>
-      items.value.length > 0 && !placing.value && !refreshing.value && !loading.value
-    )
+    const busy = computed(() => refreshing.value || loading.value)
+    const { placing, orderResult, orderError, canPlaceOrder, placeOrder, resetForBudgetChange } =
+      useRestockingOrder({
+        items,
+        busy,
+        submit: (payload, key) => api.placeRestockingOrder(payload, key),
+        formatError: err =>
+          err.response?.data?.detail || t('restocking.orderFailed') + ': ' + err.message
+      })
 
     const loadRecommendations = async () => {
       // Each request gets an id; only the latest one may write state. Without
@@ -164,27 +170,10 @@ export default {
     // fetch once the user pauses, instead of one request per step.
     watch(budget, () => {
       refreshing.value = true
-      orderResult.value = null
-      orderError.value = null
+      resetForBudgetChange() // clears placed marker + result so the new cart can be ordered
       clearTimeout(debounceTimer)
       debounceTimer = setTimeout(loadRecommendations, DEBOUNCE_MS)
     })
-
-    const placeOrder = async () => {
-      if (!canPlaceOrder.value) return
-      placing.value = true
-      orderError.value = null
-      orderResult.value = null
-      try {
-        orderResult.value = await api.placeRestockingOrder(
-          items.value.map(i => ({ sku: i.sku, quantity: i.quantity }))
-        )
-      } catch (err) {
-        orderError.value = err.response?.data?.detail || t('restocking.orderFailed') + ': ' + err.message
-      } finally {
-        placing.value = false
-      }
-    }
 
     const formatCurrency = (value, cents = false) => {
       const isJpy = currentCurrency.value === 'JPY'
@@ -305,6 +294,27 @@ export default {
 .place-order-btn:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
+}
+
+.place-order-btn.is-submitting {
+  background: #64748b;
+  cursor: progress;
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: 0.5rem;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .summary-line {

@@ -1,12 +1,51 @@
 import itertools
+import threading
+from collections import OrderedDict, deque
 from datetime import date, datetime, timedelta
-from fastapi import FastAPI, HTTPException, Query
+from urllib.parse import unquote
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
 from mock_data import inventory_items, orders, demand_forecasts, backlog_items, spending_summary, monthly_spending, category_spending, recent_transactions, purchase_orders
 
 app = FastAPI(title="Factory Inventory Management System")
+
+# Audit log. Records who created each purchase order and restocking order, and when.
+# Like the other demo data it lives in memory. The log is capped at the most recent
+# entries, so old entries drop off once the cap is reached.
+AUDIT_LOG_MAX_ENTRIES = 1000
+AUDIT_ACTOR_MAX_LENGTH = 100
+audit_log: deque = deque(maxlen=AUDIT_LOG_MAX_ENTRIES)
+_next_audit_id = itertools.count(1)
+
+class AuditEntry(BaseModel):
+    id: int
+    timestamp: str
+    entity_type: str  # "purchase_order" or "restocking_order"
+    entity_id: str
+    action: str  # currently only "create"
+    # Reported by the client in the X-Actor-Name header. Not verified by the server.
+    actor_name: Optional[str] = None
+    before: Optional[dict] = None  # None for creates
+    after: Optional[dict] = None
+
+def record_audit(request: Request, entity_type: str, entity_id: str, action: str,
+                 before: Optional[dict], after: Optional[dict]) -> None:
+    """Append one audit entry for a change."""
+    raw_actor = request.headers.get("X-Actor-Name")
+    # The client URL-encodes the name, so non-ASCII names such as Japanese survive the HTTP header
+    actor = unquote(raw_actor).strip()[:AUDIT_ACTOR_MAX_LENGTH] if raw_actor else ""
+    audit_log.append(AuditEntry(
+        id=next(_next_audit_id),
+        timestamp=datetime.now().replace(microsecond=0).isoformat(),
+        entity_type=entity_type,
+        entity_id=entity_id,
+        action=action,
+        actor_name=actor or None,
+        before=before,
+        after=after,
+    ).model_dump())
 
 # Quarter mapping for date filtering
 QUARTER_MAP = {
@@ -388,7 +427,7 @@ def get_purchase_order(backlog_item_id: str):
     raise HTTPException(status_code=404, detail=f"No purchase order for backlog item {backlog_item_id}")
 
 @app.post("/api/purchase-orders", response_model=PurchaseOrder, status_code=201)
-def create_purchase_order(body: CreatePurchaseOrderRequest):
+def create_purchase_order(body: CreatePurchaseOrderRequest, request: Request):
     """Create a purchase order for a backlog item"""
     if not any(item["id"] == body.backlog_item_id for item in backlog_items):
         raise HTTPException(status_code=404, detail=f"Backlog item {body.backlog_item_id} not found")
@@ -404,6 +443,7 @@ def create_purchase_order(body: CreatePurchaseOrderRequest):
     )
     # Appended to the module-level list so GET endpoints see it. Lost on restart, like all data here.
     purchase_orders.append(po.model_dump())
+    record_audit(request, "purchase_order", po.id, "create", None, po.model_dump())
     return po
 
 # Restocking. Orders live in memory only, like the other demo data.
@@ -495,9 +535,51 @@ def get_restocking_recommendations(budget: float = Query(0, ge=0)):
     """Recommend restocking items that fit within the given budget"""
     return build_restock_recommendations(budget)
 
+# Idempotency keys for restocking submissions. A retry with the same key returns the original
+# order instead of creating a second one. Kept in memory and capped, like the audit log.
+RESTOCK_IDEMPOTENCY_MAX_KEYS = 1000
+_restock_idempotency: "OrderedDict[str, dict]" = OrderedDict()
+# Serialises the check-then-create below, so two identical requests arriving at once cannot both create an order.
+_restock_lock = threading.Lock()
+
+def _restock_fingerprint(body: "PlaceRestockingRequest") -> tuple:
+    """The part of a request that must match for a replayed key to count as the same submission."""
+    return tuple(sorted((item.sku, item.quantity) for item in body.items))
+
 @app.post("/api/restocking/orders", response_model=RestockingOrder, status_code=201)
-def place_restocking_order(body: PlaceRestockingRequest):
-    """Submit a restocking order. Unit costs are looked up on the server, not taken from the client."""
+def place_restocking_order(
+    body: PlaceRestockingRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: Optional[str] = Header(None, max_length=200),
+):
+    """Submit a restocking order. Unit costs are looked up on the server, not taken from the client.
+
+    Send an Idempotency-Key header to make retries safe. Re-sending the same key with the same
+    items returns the original order with HTTP 200 and creates nothing. Re-using a key with
+    different items returns 409.
+    """
+    with _restock_lock:
+        if idempotency_key:
+            seen = _restock_idempotency.get(idempotency_key)
+            if seen is not None:
+                if seen["fingerprint"] != _restock_fingerprint(body):
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different order")
+                # Same submission sent again, e.g. a retry after a timeout. Return the original order.
+                response.status_code = 200
+                return seen["order"]
+
+        order = _create_restocking_order(body)
+        # Audit entries use the order number (RST-YYYY-NNNN) as the entity id, because that is what users see
+        record_audit(request, "restocking_order", order.order_number, "create", None, order.model_dump())
+        if idempotency_key:
+            _restock_idempotency[idempotency_key] = {"fingerprint": _restock_fingerprint(body), "order": order}
+            while len(_restock_idempotency) > RESTOCK_IDEMPOTENCY_MAX_KEYS:
+                _restock_idempotency.popitem(last=False)
+        return order
+
+def _create_restocking_order(body: PlaceRestockingRequest) -> RestockingOrder:
+    """Validate the request and append a new restocking order. Raises HTTPException on bad input."""
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
 
@@ -544,6 +626,25 @@ def place_restocking_order(body: PlaceRestockingRequest):
     )
     restocking_orders.append(order)
     return order
+
+@app.get("/api/audit-log", response_model=List[AuditEntry])
+def get_audit_log(
+    entity_type: Optional[str] = Query(None, pattern="^(all|purchase_order|restocking_order)$"),
+    action: Optional[str] = Query(None, pattern="^(all|create)$"),
+    start_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    end_date: Optional[str] = Query(None, pattern=r"^\d{4}-\d{2}-\d{2}$"),
+):
+    """Query the audit log, newest first. Dates are inclusive and compare against the date part of each timestamp."""
+    entries = list(audit_log)
+    if entity_type and entity_type != "all":
+        entries = [e for e in entries if e["entity_type"] == entity_type]
+    if action and action != "all":
+        entries = [e for e in entries if e["action"] == action]
+    if start_date:
+        entries = [e for e in entries if e["timestamp"][:10] >= start_date]
+    if end_date:
+        entries = [e for e in entries if e["timestamp"][:10] <= end_date]
+    return list(reversed(entries))
 
 @app.get("/api/restocking/orders", response_model=List[RestockingOrder])
 def get_restocking_orders():

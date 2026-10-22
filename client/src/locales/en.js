@@ -7,6 +7,7 @@ export default {
     finance: 'Finance',
     demandForecast: 'Demand Forecast',
     restocking: 'Restocking',
+    auditLog: 'Audit Log',
     companyName: 'Catalyst Components',
     subtitle: 'Inventory Management System',
     groupOperations: 'Operations',
@@ -331,6 +332,7 @@ export default {
     empty: 'No items fit the selected budget',
     placeOrder: 'Place Order',
     placing: 'Placing order...',
+    submitting: 'Submitting...',
     updating: 'Updating...',
     orderFailed: 'Failed to place order',
     loadFailed: 'Failed to load recommendations',
@@ -359,6 +361,46 @@ export default {
     submittedDate: 'Submitted',
     leadTime: 'Lead Time (days)',
     lineItems: 'Line Items'
+  },
+
+  auditLog: {
+    title: 'Audit Log',
+    subtitle: 'Record of purchase order and restocking order changes',
+    retentionNote: 'The log keeps the most recent 1,000 entries and resets when the server restarts.',
+    loading: 'Loading audit log...',
+    loadFailed: 'Failed to load audit log: {message}',
+    noData: 'No audit entries match the selected filters',
+    filters: {
+      entityType: 'Entity type',
+      action: 'Action',
+      startDate: 'Start date',
+      endDate: 'End date',
+      all: 'All',
+      reset: 'Reset'
+    },
+    entityType: {
+      purchase_order: 'Purchase order',
+      restocking_order: 'Restocking order'
+    },
+    action: {
+      create: 'Create'
+    },
+    columns: {
+      timestamp: 'Timestamp',
+      entityType: 'Entity type',
+      entityId: 'Entity ID',
+      action: 'Action',
+      actor: 'Actor',
+      changes: 'Changes'
+    },
+    actorReportedByClient: 'reported by client',
+    expand: 'Show changes',
+    collapse: 'Hide changes',
+    noPreviousValue: 'No previous value',
+    field: 'Field',
+    before: 'Before',
+    after: 'After',
+    exportCsv: 'Export CSV'
   },
 
   // Common
