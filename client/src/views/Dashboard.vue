@@ -823,6 +823,12 @@ export default {
   grid-column: 1 / -1;
 }
 
+@media (max-width: 899px) {
+  .charts-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
 .chart-content {
   padding: 1rem;
 }

@@ -8,7 +8,15 @@ export default {
     demandForecast: 'Demand Forecast',
     restocking: 'Restocking',
     companyName: 'Catalyst Components',
-    subtitle: 'Inventory Management System'
+    subtitle: 'Inventory Management System',
+    groupOperations: 'Operations',
+    groupAnalysis: 'Planning and analysis',
+    primaryNavigation: 'Main navigation',
+    openMenu: 'Open menu',
+    closeMenu: 'Close menu',
+    toggleSidebar: 'Icons-only sidebar',
+    collapseSidebar: 'Collapse sidebar',
+    expandSidebar: 'Expand sidebar'
   },
 
   // Dashboard
