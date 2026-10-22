@@ -1,3 +1,5 @@
+import itertools
+from datetime import date
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -303,6 +305,80 @@ def get_monthly_trends():
     result = list(months.values())
     result.sort(key=lambda x: x['month'])
     return result
+
+# Tasks are kept in memory only. Ids start at 1000 so they never collide with
+# the mock tasks in useAuth.js (ids 1-4), which the client merges into one list.
+class Task(BaseModel):
+    id: int
+    title: str
+    priority: str
+    dueDate: str
+    status: str = 'pending'
+
+class CreateTaskRequest(BaseModel):
+    title: str
+    priority: str = 'medium'
+    dueDate: str
+
+tasks_store: List[Task] = []
+_next_task_id = itertools.count(1000)
+
+@app.get("/api/tasks", response_model=List[Task])
+def get_tasks():
+    """List tasks created through the API"""
+    return tasks_store
+
+@app.post("/api/tasks", response_model=Task, status_code=201)
+def create_task(body: CreateTaskRequest):
+    """Create a task"""
+    task = Task(id=next(_next_task_id), **body.model_dump())
+    tasks_store.append(task)
+    return task
+
+@app.delete("/api/tasks/{task_id}")
+def delete_task(task_id: int):
+    """Delete a task by id"""
+    for i, task in enumerate(tasks_store):
+        if task.id == task_id:
+            del tasks_store[i]
+            return {"deleted": task_id}
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+@app.patch("/api/tasks/{task_id}", response_model=Task)
+def toggle_task(task_id: int):
+    """Toggle a task between pending and completed. The client sends no body."""
+    for task in tasks_store:
+        if task.id == task_id:
+            task.status = 'pending' if task.status == 'completed' else 'completed'
+            return task
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+@app.get("/api/purchase-orders/{backlog_item_id}", response_model=PurchaseOrder)
+def get_purchase_order(backlog_item_id: str):
+    """Get the purchase order for a backlog item"""
+    for po in purchase_orders:
+        if po["backlog_item_id"] == backlog_item_id:
+            return po
+    raise HTTPException(status_code=404, detail=f"No purchase order for backlog item {backlog_item_id}")
+
+@app.post("/api/purchase-orders", response_model=PurchaseOrder, status_code=201)
+def create_purchase_order(body: CreatePurchaseOrderRequest):
+    """Create a purchase order for a backlog item"""
+    if not any(item["id"] == body.backlog_item_id for item in backlog_items):
+        raise HTTPException(status_code=404, detail=f"Backlog item {body.backlog_item_id} not found")
+    # Only one PO per backlog item. The backlog endpoint flags items that already have one.
+    if any(po["backlog_item_id"] == body.backlog_item_id for po in purchase_orders):
+        raise HTTPException(status_code=400, detail=f"Backlog item {body.backlog_item_id} already has a purchase order")
+
+    po = PurchaseOrder(
+        id=f"PO-{len(purchase_orders) + 1:04d}",
+        status="Pending",
+        created_date=date.today().isoformat(),
+        **body.model_dump()
+    )
+    # Appended to the module-level list so GET endpoints see it. Lost on restart, like all data here.
+    purchase_orders.append(po.model_dump())
+    return po
 
 if __name__ == "__main__":
     import uvicorn
