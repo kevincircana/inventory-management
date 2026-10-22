@@ -332,6 +332,7 @@ export default {
     empty: 'No items fit the selected budget',
     placeOrder: 'Place Order',
     placing: 'Placing order...',
+    submitting: 'Submitting...',
     updating: 'Updating...',
     orderFailed: 'Failed to place order',
     loadFailed: 'Failed to load recommendations',

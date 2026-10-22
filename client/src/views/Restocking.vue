@@ -60,10 +60,13 @@
           <button
             type="button"
             class="place-order-btn"
+            :class="{ 'is-submitting': placing }"
             :disabled="!canPlaceOrder"
+            :aria-busy="placing ? 'true' : 'false'"
             @click="placeOrder"
           >
-            {{ placing ? t('restocking.placing') : t('restocking.placeOrder') }}
+            <span v-if="placing" class="spinner" aria-hidden="true"></span>
+            {{ placing ? t('restocking.submitting') : t('restocking.placeOrder') }}
           </button>
         </div>
 
@@ -133,6 +136,8 @@ export default {
 
     let debounceTimer = null
     let requestSeq = 0
+    let idempotencyKey = null // one key per logical order submission
+    let idempotencyKeyCart = null // cart contents the key was issued for
 
     const canPlaceOrder = computed(() =>
       items.value.length > 0 && !placing.value && !refreshing.value && !loading.value
@@ -171,14 +176,25 @@ export default {
     })
 
     const placeOrder = async () => {
-      if (!canPlaceOrder.value) return
+      // Guard the function itself (not only the button) against double submits.
+      if (placing.value || !canPlaceOrder.value) return
       placing.value = true
       orderError.value = null
       orderResult.value = null
+      const payload = items.value.map(i => ({ sku: i.sku, quantity: i.quantity }))
+      const signature = JSON.stringify(payload)
+      // The key is kept across failed attempts on purpose: a timed-out request
+      // may have succeeded server-side, and resending the same key makes the
+      // server return that order instead of creating a second one. A different
+      // cart (signature mismatch) is a new order and gets a new key.
+      if (!idempotencyKey || idempotencyKeyCart !== signature) {
+        idempotencyKey = crypto.randomUUID()
+        idempotencyKeyCart = signature
+      }
       try {
-        orderResult.value = await api.placeRestockingOrder(
-          items.value.map(i => ({ sku: i.sku, quantity: i.quantity }))
-        )
+        orderResult.value = await api.placeRestockingOrder(payload, idempotencyKey)
+        idempotencyKey = null // order succeeded; next order starts fresh
+        idempotencyKeyCart = null
       } catch (err) {
         orderError.value = err.response?.data?.detail || t('restocking.orderFailed') + ': ' + err.message
       } finally {
@@ -305,6 +321,27 @@ export default {
 .place-order-btn:disabled {
   background: #cbd5e1;
   cursor: not-allowed;
+}
+
+.place-order-btn.is-submitting {
+  background: #64748b;
+  cursor: progress;
+}
+
+.spinner {
+  display: inline-block;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin-right: 0.5rem;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  vertical-align: -0.1em;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .summary-line {

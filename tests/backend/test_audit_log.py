@@ -83,7 +83,8 @@ class TestAuditLogRecording:
         order = _place_restocking_order(client, actor_name="Audit Test Restock")
 
         entries = client.get("/api/audit-log", params={"entity_type": "restocking_order"}).json()
-        entry = next(e for e in entries if e["entity_id"] == order["id"])
+        # The entity id is the order number users see (RST-YYYY-NNNN), not the internal id
+        entry = next(e for e in entries if e["entity_id"] == order["order_number"])
 
         assert entry["action"] == "create"
         assert entry["actor_name"] == "Audit Test Restock"

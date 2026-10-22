@@ -1,8 +1,9 @@
 import itertools
-from collections import deque
+import threading
+from collections import OrderedDict, deque
 from datetime import date, datetime, timedelta
 from urllib.parse import unquote
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
 from pydantic import BaseModel
@@ -534,9 +535,51 @@ def get_restocking_recommendations(budget: float = Query(0, ge=0)):
     """Recommend restocking items that fit within the given budget"""
     return build_restock_recommendations(budget)
 
+# Idempotency keys for restocking submissions. A retry with the same key returns the original
+# order instead of creating a second one. Kept in memory and capped, like the audit log.
+RESTOCK_IDEMPOTENCY_MAX_KEYS = 1000
+_restock_idempotency: "OrderedDict[str, dict]" = OrderedDict()
+# Serialises the check-then-create below, so two identical requests arriving at once cannot both create an order.
+_restock_lock = threading.Lock()
+
+def _restock_fingerprint(body: "PlaceRestockingRequest") -> tuple:
+    """The part of a request that must match for a replayed key to count as the same submission."""
+    return tuple(sorted((item.sku, item.quantity) for item in body.items))
+
 @app.post("/api/restocking/orders", response_model=RestockingOrder, status_code=201)
-def place_restocking_order(body: PlaceRestockingRequest, request: Request):
-    """Submit a restocking order. Unit costs are looked up on the server, not taken from the client."""
+def place_restocking_order(
+    body: PlaceRestockingRequest,
+    request: Request,
+    response: Response,
+    idempotency_key: Optional[str] = Header(None, max_length=200),
+):
+    """Submit a restocking order. Unit costs are looked up on the server, not taken from the client.
+
+    Send an Idempotency-Key header to make retries safe. Re-sending the same key with the same
+    items returns the original order with HTTP 200 and creates nothing. Re-using a key with
+    different items returns 409.
+    """
+    with _restock_lock:
+        if idempotency_key:
+            seen = _restock_idempotency.get(idempotency_key)
+            if seen is not None:
+                if seen["fingerprint"] != _restock_fingerprint(body):
+                    raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different order")
+                # Same submission sent again, e.g. a retry after a timeout. Return the original order.
+                response.status_code = 200
+                return seen["order"]
+
+        order = _create_restocking_order(body)
+        # Audit entries use the order number (RST-YYYY-NNNN) as the entity id, because that is what users see
+        record_audit(request, "restocking_order", order.order_number, "create", None, order.model_dump())
+        if idempotency_key:
+            _restock_idempotency[idempotency_key] = {"fingerprint": _restock_fingerprint(body), "order": order}
+            while len(_restock_idempotency) > RESTOCK_IDEMPOTENCY_MAX_KEYS:
+                _restock_idempotency.popitem(last=False)
+        return order
+
+def _create_restocking_order(body: PlaceRestockingRequest) -> RestockingOrder:
+    """Validate the request and append a new restocking order. Raises HTTPException on bad input."""
     if not body.items:
         raise HTTPException(status_code=400, detail="Order must contain at least one item")
 
@@ -582,7 +625,6 @@ def place_restocking_order(body: PlaceRestockingRequest, request: Request):
         total_value=round(sum(line.line_total for line in lines), 2),
     )
     restocking_orders.append(order)
-    record_audit(request, "restocking_order", order.id, "create", None, order.model_dump())
     return order
 
 @app.get("/api/audit-log", response_model=List[AuditEntry])

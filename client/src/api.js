@@ -157,8 +157,14 @@ export const api = {
     return response.data
   },
 
-  async placeRestockingOrder(items) {
-    const response = await axios.post(`${API_BASE_URL}/restocking/orders`, { items })
+  // The idempotency key must stay the same across retries of one submission, so the server
+  // returns the original order instead of creating a duplicate. The caller generates it.
+  async placeRestockingOrder(items, idempotencyKey) {
+    const response = await axios.post(
+      `${API_BASE_URL}/restocking/orders`,
+      { items },
+      { headers: { 'Idempotency-Key': idempotencyKey } }
+    )
     return response.data
   },
 

@@ -332,6 +332,8 @@ export default {
     empty: '選択した予算に収まる品目はありません',
     placeOrder: '発注する',
     placing: '発注中...',
+    // TODO: needs native Japanese review
+    submitting: '送信中...',
     updating: '更新中...',
     orderFailed: '発注に失敗しました',
     loadFailed: '推奨の読み込みに失敗しました',
